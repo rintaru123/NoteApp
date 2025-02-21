@@ -611,9 +611,7 @@ class LargeForm(QMainWindow):
         self.move((screen.width() - size.width()) // 2,
                  (screen.height() - size.height()) // 2)
 
-    def filter_notes(self):
-        search_text = self.search_input.text().lower()
-        self.load_notes(search_text)  # Передаем поисковый запрос в load_notes
+    
 
     def load_notes(self, search_text=""):
         while self.notes_layout.count():
@@ -621,11 +619,11 @@ class LargeForm(QMainWindow):
             if item.widget():
                 item.widget().deleteLater()
 
-        filtered_notes = [
-            note for note in self.notes 
-            if search_text.lower() in note['text'].lower() or 
-            search_text.lower() in note['time'].lower()
-        ]
+        if self.notes:
+            #print(self.notes)
+            filtered_notes = [ note for note in self.notes if search_text.lower() in note['text'].lower() or search_text.lower() in note['time'].lower()]
+        else:
+            filtered_notes=[]
 
         if not filtered_notes:
             no_notes_label = QLabel(self.loc.get("no_notes"))
@@ -687,7 +685,7 @@ class LargeForm(QMainWindow):
             note_layout.addWidget(text_container)
 
             edit_button = QPushButton(self.loc.get("edit"))
-            edit_button.setFixedSize(60, 24)
+            edit_button.setFixedSize(90, 24)
             edit_button.setStyleSheet("""
                 QPushButton {
                     background-color: #2196F3;
@@ -739,7 +737,9 @@ class LargeForm(QMainWindow):
             """)
             self.notes_layout.addWidget(note_widget)
             
-
+    def filter_notes(self):
+            search_text = self.search_input.text().lower()
+            self.load_notes(search_text)  # Передаем поисковый запрос в load_notes
     def save_note(self):
         note_text = self.note_input.text().strip()
         if note_text:
