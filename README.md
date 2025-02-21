@@ -1,4 +1,4 @@
-## Simple Note maker in the corner of your desktop
+## Simple Note maker on the corner of your desktop
 
 #### Program has a localization on english and russian.
 #### All the notes are saving in **notes.json**
