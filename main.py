@@ -24,7 +24,7 @@ class Localization:
         self.lang = lang
         self.translations = {
             "ru": {
-                "title": "Заметки",
+                "title": "NoteApp",
                 "expand": "Развернуть",
                 "collapse": "Свернуть",
                 "add": "+",
@@ -224,6 +224,19 @@ class SmallForm(QMainWindow):
             self.setStyleSheet("""
                 background-color: #F5F5F5;
                 color: #333333;
+            """)
+            self.note_input.setStyleSheet("""
+                QLineEdit {
+                    border: 1px solid #555555;
+                    border-radius: 8px;
+                    padding: 8px;
+                    background-color:#ffffff;
+                    color:rgb(0, 0, 0);
+                }
+                QLineEdit:focus {
+                    border: 1px solid #2196F3;
+                    background-color:#ffffff;
+                }
             """)
 
     def start_animation(self):
@@ -673,11 +686,13 @@ class LargeForm(QMainWindow):
                 QLabel {
                     color: #333333;
                     font-size: 12px;
+                    text-align: justify;
                 }
             """ if self.theme == "light" else """
                 QLabel {
                     color: #FFFFFF;
                     font-size: 12px;
+                    text-align: justify;
                 }
             """)
             text_layout.addWidget(text_label)
@@ -688,16 +703,16 @@ class LargeForm(QMainWindow):
             edit_button.setFixedSize(90, 24)
             edit_button.setStyleSheet("""
                 QPushButton {
-                    background-color: #2196F3;
+                    background-color:rgb(55, 173, 0);
                     color: white;
                     border-radius: 6px;
                     font-size: 10px;
                 }
                 QPushButton:hover {
-                    background-color: #1976D2;
+                    background-color:rgb(42, 107, 12);
                 }
                 QPushButton:pressed {
-                    background-color: #1565C0;
+                    background-color: rgb(15, 20, 12);
                 }
             """)
             edit_button.clicked.connect(lambda _, n=note: self.edit_note(n))
