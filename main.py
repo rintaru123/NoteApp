@@ -1,878 +1,503 @@
 import sys
-import json
 import os
-import logging
 from datetime import datetime
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                            QLineEdit, QPushButton, QLabel, QDesktopWidget, QScrollArea,
-                            QMessageBox, QFileDialog, QMenuBar, QAction, QSystemTrayIcon, 
-                            QMenu, QComboBox,QInputDialog)
-from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, QRect, QSettings, QThread, pyqtSignal
-from PyQt5.QtGui import QFont, QIcon, QPalette, QColor, QPixmap
+                             QLineEdit, QPushButton, QDesktopWidget,
+                             QMessageBox, QFileDialog, QAction, QSystemTrayIcon,
+                             QMenu, QCheckBox, QTextEdit, QFrame)
+from PyQt5.QtCore import Qt, QSettings, QTimer
+from PyQt5.QtGui import QFont, QIcon, QTextCursor, QColor, QPainter, QPixmap
 
-# Настройка логирования
-logging.basicConfig(filename="notes.log", level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
-# Путь к файлам
-JSON_FILE = "notes.json"
-BACKUP_FILE = "notes_backup.json"
+# --- Константы ---
+TEXT_FILE = "notes.txt"
 SETTINGS_FILE = "settings.ini"
 
-# Локализация (без изменений)
+# --- Функция для поиска ресурсов внутри EXE (PyInstaller) ---
+def resource_path(relative_path):
+    """ Получает абсолютный путь к ресурсу, работает для dev и для PyInstaller """
+    try:
+        # PyInstaller создает временную папку и хранит путь в _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
+# --- Стили (Modern Palette) ---
+STYLES = {
+    "light": {
+        "bg": "#FFFFFF",
+        "text": "#333333",
+        "input_bg": "#F0F2F5",
+        "input_border": "#E1E4E8",
+        "btn_bg": "#0078D4",
+        "btn_hover": "#005A9E",
+        "btn_text": "#FFFFFF",
+    },
+    "dark": {
+        "bg": "#202124",
+        "text": "#E8EAED",
+        "input_bg": "#303134",
+        "input_border": "#5F6368",
+        "btn_bg": "#8AB4F8",
+        "btn_hover": "#669DF6",
+        "btn_text": "#202124",
+    }
+}
+
 class Localization:
     def __init__(self, lang="ru"):
         self.lang = lang
         self.translations = {
             "ru": {
                 "title": "NoteApp",
-                "expand": "Развернуть",
-                "collapse": "Свернуть",
-                "add": "+",
-                "delete": "Удалить",
-                "edit": "Редактировать",
-                "search": "Поиск",
-                "sort_date_asc": "Сортировать по дате (возр.)",
-                "sort_date_desc": "Сортировать по дате (убыв.)",
-                "sort_alpha": "Сортировать по алфавиту",
-                "export": "Экспорт",
-                "import": "Импорт",
-                "settings": "Настройки",
-                "themes":"Темы",
-                "theme_light": "Светлая тема",
-                "theme_dark": "Темная тема",
-                "no_notes": "Заметок пока нет.",
-                "saved": "Заметка сохранена!",
-                "error": "Ошибка",
-                "error_saving": "Ошибка при сохранении заметки!",
-                "error_loading": "Ошибка при загрузке заметок!",
-                "error_backup": "Ошибка при создании резервной копии!",
-                "edit_note": "Редактировать заметку",
-                "enter_note": "Введите заметку",
-                "add_note": "Добавить заметку",
-                "show_all_notes": "Показать все заметки",
+                "add": "@",
+                "edit_mode": "Редактирование",
+                "enter_note": "Заметка...",
                 "show": "Показать",
                 "quit": "Выход",
-                "sort": "Сортировка"
+                "settings": "Настройки",
+                "theme_light": "Светлая",
+                "theme_dark": "Темная",
+                "clear_file": "Очистить все",
+                "confirm_clear": "Удалить все записи?",
+                "export": "Экспорт",
+                "language": "Язык (Language)",
+                "about": "О программе"
             },
             "en": {
-                "title": "Notes",
-                "expand": "Expand",
-                "collapse": "Collapse",
-                "add": "+",
-                "delete": "Delete",
-                "edit": "Edit",
-                "search": "Search",
-                "sort_date_asc": "Sort by date (asc)",
-                "sort_date_desc": "Sort by date (desc)",
-                "sort_alpha": "Sort alphabetically",
-                "export": "Export",
-                "import": "Import",
-                "settings": "Settings",
-                "themes":"Themes",
-                "theme_light": "Light theme",
-                "theme_dark": "Dark theme",
-                "no_notes": "No notes yet.",
-                "saved": "Note saved!",
-                "error": "Error",
-                "error_saving": "Error saving note!",
-                "error_loading": "Error loading notes!",
-                "error_backup": "Error creating backup!",
-                "edit_note": "Edit note",
-                "enter_note": "Enter note",
-                "add_note": "Add note",
-                "show_all_notes": "Show all notes",
+                "title": "NoteApp",
+                "add": "@",
+                "edit_mode": "Edit mode",
+                "enter_note": "Note...",
                 "show": "Show",
                 "quit": "Quit",
-                "sort": "Sort"
+                "settings": "Settings",
+                "theme_light": "Light",
+                "theme_dark": "Dark",
+                "clear_file": "Clear all",
+                "confirm_clear": "Delete all notes?",
+                "export": "Export",
+                "language": "Language",
+                "about": "About"
             }
         }
 
     def get(self, key):
         return self.translations[self.lang].get(key, key)
 
-class NoteWorker(QThread):
-    noteSaved = pyqtSignal()
-    errorOccurred = pyqtSignal(str)
-
-    def __init__(self, notes, note, filename):
-        super().__init__()
-        self.notes = notes
-        self.note = note
-        self.filename = filename
-
-    def run(self):
-        try:
-            self.notes.append(self.note)
-            # Сохранение без шифрования
-            with open(self.filename, "w", encoding="utf-8") as f:
-                json.dump(self.notes, f, ensure_ascii=False, indent=2)
-            self.noteSaved.emit()
-        except Exception as e:
-            logging.error(f"Error saving note: {e}")
-            self.errorOccurred.emit(str(e))
+    def set_language(self, new_lang):
+        self.lang = new_lang
 
 class SmallForm(QMainWindow):
     def __init__(self):
         super().__init__()
         self.settings = QSettings(SETTINGS_FILE, QSettings.IniFormat)
         self.lang = self.settings.value("language", "ru")
-        self.theme = self.settings.value("theme", "light")
+        self.theme_name = self.settings.value("theme", "light")
         self.loc = Localization(self.lang)
-        self.notes = []
+        self.large_form = None 
+        self.old_pos = None 
+
         self.initUI()
-        self.load_notes()
         self.setup_tray()
 
     def initUI(self):
-        self.setWindowTitle(self.loc.get("title"))
-        self.setFixedSize(350, 60)  # Увеличен размер для лучшей читаемости
-        self.setWindowFlags(Qt.WindowStaysOnTopHint)
-        self.setWindowIcon(QIcon("icon.png"))
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setFixedSize(380, 50)
+        self.setWindowIcon(QIcon(resource_path("icon.png")))
+        
+        self.central_widget = QWidget()
+        self.central_widget.setObjectName("CentralWidget")
+        self.setCentralWidget(self.central_widget)
+        
+        layout = QHBoxLayout(self.central_widget)
+        layout.setContentsMargins(8, 5, 8, 5) 
+        layout.setSpacing(8)
 
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QHBoxLayout(central_widget)
-        main_layout.setContentsMargins(8, 8, 8, 8)
-        main_layout.setSpacing(8)
-
-        # Поле ввода заметки
         self.note_input = QLineEdit()
-        self.note_input.setFont(QFont("Segoe UI", 11))
-        self.note_input.setPlaceholderText(self.loc.get("enter_note"))
-        self.note_input.setStyleSheet("""
-            QLineEdit {
-                border: 1px solid #cccccc;
-                border-radius: 8px;
-                padding: 8px;
-                background-color: #ffffff;
-            }
-            QLineEdit:focus {
-                border: 1px solid #2196F3;
-                background-color: #f0f8ff;
-            }
-        """)
-        main_layout.addWidget(self.note_input, stretch=1)
+        self.note_input.setFont(QFont("Segoe UI", 10))
+        layout.addWidget(self.note_input)
 
-        # Кнопка добавления
         self.add_button = QPushButton(self.loc.get("add"))
-        self.add_button.setFixedSize(32, 32)
-        self.add_button.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                border-radius: 16px;
-                font-size: 18px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #1976D2;
-            }
-            QPushButton:pressed {
-                background-color: #1565C0;
-            }
-        """)
+        self.add_button.setFixedSize(28, 28) 
+        self.add_button.setCursor(Qt.PointingHandCursor)
         self.add_button.clicked.connect(self.save_note)
-        self.add_button.setToolTip(self.loc.get("add_note"))
-        main_layout.addWidget(self.add_button)
+        layout.addWidget(self.add_button)
 
-        # Кнопка расширения
-        self.expand_button = QPushButton(self.loc.get("expand"))
-        self.expand_button.setFixedSize(100, 32)
-        self.expand_button.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                border-radius: 8px;
-                font-size: 11px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #45A049;
-            }
-            QPushButton:pressed {
-                background-color: #3D8B40;
-            }
-        """)
+        self.expand_button = QPushButton("⤢")
+        self.expand_button.setFixedSize(28, 28)
+        self.expand_button.setCursor(Qt.PointingHandCursor)
         self.expand_button.clicked.connect(self.open_large_form)
-        self.expand_button.setToolTip(self.loc.get("show_all_notes"))
-        main_layout.addWidget(self.expand_button)
+        layout.addWidget(self.expand_button)
 
-        self.apply_theme()
+        self.close_btn = QPushButton("×")
+        self.close_btn.setFixedSize(16, 16)
+        self.close_btn.setStyleSheet("background: transparent; color: #999; font-weight: bold; border: none; font-size: 14px;")
+        self.close_btn.setCursor(Qt.PointingHandCursor)
+        self.close_btn.clicked.connect(self.hide)
+        self.close_btn.setParent(self.central_widget)
+        self.close_btn.move(360, 3) 
+
+        self.apply_styles()
         self.load_position()
-        self.start_animation()
+        self.update_ui_text()
 
-    def apply_theme(self):
-        if self.theme == "dark":
-            self.setStyleSheet("""
-                background-color: #2D2D2D;
-                color: #FFFFFF;
-            """)
-            self.note_input.setStyleSheet("""
-                QLineEdit {
-                    border: 1px solid #555555;
-                    border-radius: 8px;
-                    padding: 8px;
-                    background-color: #3C3C3C;
-                    color: #FFFFFF;
-                }
-                QLineEdit:focus {
-                    border: 1px solid #2196F3;
-                    background-color: #454545;
-                }
-            """)
-        else:
-            self.setStyleSheet("""
-                background-color: #F5F5F5;
-                color: #333333;
-            """)
-            self.note_input.setStyleSheet("""
-                QLineEdit {
-                    border: 1px solid #555555;
-                    border-radius: 8px;
-                    padding: 8px;
-                    background-color:#ffffff;
-                    color:rgb(0, 0, 0);
-                }
-                QLineEdit:focus {
-                    border: 1px solid #2196F3;
-                    background-color:#ffffff;
-                }
-            """)
+    def apply_styles(self):
+        s = STYLES[self.theme_name]
+        self.central_widget.setStyleSheet(f"""
+            #CentralWidget {{
+                background-color: {s['bg']};
+                border-radius: 10px;
+                border: 1px solid {s['input_border']};
+            }}
+        """)
+        self.note_input.setStyleSheet(f"""
+            QLineEdit {{
+                border: none;
+                background-color: {s['input_bg']};
+                border-radius: 6px;
+                padding: 4px 8px;
+                color: {s['text']};
+            }}
+        """)
+        self.add_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {s['btn_bg']};
+                color: {s['btn_text']};
+                border-radius: 14px;
+                font-weight: bold;
+                font-size: 14px;
+                border: none;
+                padding-bottom: 2px;
+            }}
+            QPushButton:hover {{ background-color: {s['btn_hover']}; }}
+        """)
+        self.expand_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {s['text']};
+                border: 1px solid {s['input_border']};
+                border-radius: 14px;
+                font-size: 14px;
+            }}
+            QPushButton:hover {{ background-color: {s['input_bg']}; }}
+        """)
 
-    def start_animation(self):
-        self.animation = QPropertyAnimation(self, b"geometry")
-        self.animation.setDuration(300)
-        self.animation.setStartValue(QRect(self.x(), self.y() + 50, self.width(), self.height()))
-        self.animation.setEndValue(QRect(self.x(), self.y(), self.width(), self.height()))
-        self.animation.start()
+    def update_ui_text(self):
+        self.note_input.setPlaceholderText(self.loc.get("enter_note"))
 
-    def setup_tray(self):
-        self.tray_icon = QSystemTrayIcon(self)
-        self.tray_icon.setIcon(QIcon("icon.png"))
-        tray_menu = QMenu()
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.old_pos = event.globalPos()
+            event.accept()
 
-        show_action = tray_menu.addAction(self.loc.get("show"))
-        show_action.triggered.connect(self.show)
+    def mouseMoveEvent(self, event):
+        if self.old_pos:
+            delta = event.globalPos() - self.old_pos
+            self.move(self.pos() + delta)
+            self.old_pos = event.globalPos()
+            event.accept()
 
-        quit_action = tray_menu.addAction(self.loc.get("quit"))
-        quit_action.triggered.connect(QApplication.quit)
-
-        self.tray_icon.setContextMenu(tray_menu)
-        self.tray_icon.show()
-
-    def position_near_taskbar(self):
-        available_geometry = QDesktopWidget().availableGeometry()
-        self.move(available_geometry.width() - self.width() - 15,
-                 available_geometry.height() - self.height() - 15)
+    def mouseReleaseEvent(self, event):
+        self.old_pos = None
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Return and event.modifiers() & Qt.ShiftModifier:
+        if event.key() == Qt.Key_Return:
             self.save_note()
-            event.accept()
+        elif event.key() == Qt.Key_Escape:
+            self.hide()
         else:
             super().keyPressEvent(event)
 
     def save_note(self):
         note_text = self.note_input.text().strip()
         if note_text:
-            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            note = {"time": current_time, "text": note_text}
-            worker = NoteWorker(self.notes, note, JSON_FILE)
-            worker.noteSaved.connect(lambda: self.show_notification(self.loc.get("saved")))
-            worker.errorOccurred.connect(self.handle_save_error)
-            worker.start()
-            self.note_input.clear()
-            self.backup_notes()
+            current_time = datetime.now().strftime("%d.%m.%Y %H:%M")
+            new_note = f"[{current_time}] {note_text}"
+            try:
+                with open(TEXT_FILE, "a", encoding="utf-8") as f:
+                    f.write(new_note + "\n")
+                self.note_input.clear()
+                self.flash_color()
+            except Exception as e:
+                print(e)
 
-    def handle_save_error(self, error_message):
-        QMessageBox.critical(self, self.loc.get("error"), 
-                           self.loc.get("error_saving") + f"\n{error_message}",
-                           QMessageBox.Ok)
+    def flash_color(self):
+        original_style = self.central_widget.styleSheet()
+        self.central_widget.setStyleSheet(original_style.replace(STYLES[self.theme_name]['input_border'], "#4CAF50").replace("1px", "2px"))
+        QTimer.singleShot(400, lambda: self.central_widget.setStyleSheet(original_style))
 
-    def load_notes(self):
-        try:
-            if os.path.exists(JSON_FILE):
-                with open(JSON_FILE, "r", encoding="utf-8") as f:
-                    self.notes = json.load(f)
-            else:
-                self.notes = []
-        except Exception as e:
-            logging.error(f"Error loading notes: {e}")
-            QMessageBox.critical(self, self.loc.get("error"), 
-                               self.loc.get("error_loading") + f"\n{e}",
-                               QMessageBox.Ok)
-            self.notes = []
-
-    def backup_notes(self):
-        try:
-            if os.path.exists(JSON_FILE):
-                with open(JSON_FILE, "r", encoding="utf-8") as f:
-                    data = f.read()
-                with open(BACKUP_FILE, "w", encoding="utf-8") as f:
-                    f.write(data)
-        except Exception as e:
-            logging.error(f"Error backing up notes: {e}")
-            QMessageBox.critical(self, self.loc.get("error"), 
-                               self.loc.get("error_backup") + f"\n{e}",
-                               QMessageBox.Ok)
-
-    def show_notification(self, message):
-        self.tray_icon.showMessage(self.loc.get("title"), 
-                                 message, 
-                                 QSystemTrayIcon.Information, 
-                                 3000)
+    def open_large_form(self):
+        if not self.large_form:
+            self.large_form = LargeForm(self)
+        self.large_form.load_file()
+        self.large_form.show()
+        self.hide()
 
     def load_position(self):
-        pos = self.settings.value("position", None)
+        pos = self.settings.value("pos_small", None)
         if pos:
             self.move(pos)
         else:
-            self.position_near_taskbar()
+            ag = QDesktopWidget().availableGeometry()
+            self.move(ag.width() - 400, ag.height() - 150)
 
     def closeEvent(self, event):
-        self.settings.setValue("position", self.pos())
-        self.settings.setValue("theme", self.theme)
-        self.settings.setValue("language", self.lang)
+        self.settings.setValue("pos_small", self.pos())
         event.accept()
 
-    def open_large_form(self):
-        self.large_form = LargeForm(self)
-        self.large_form.show()
-        self.hide()
+    def setup_tray(self):
+        self.tray_icon = QSystemTrayIcon(self)
+        
+        # Используем resource_path для иконки
+        icon_path = resource_path("icon.png")
+        if os.path.exists(icon_path):
+             self.tray_icon.setIcon(QIcon(icon_path))
+        else:
+             pix = QPixmap(16, 16)
+             pix.fill(Qt.transparent)
+             p = QPainter(pix)
+             p.setBrush(QColor(STYLES['light']['btn_bg']))
+             p.drawEllipse(0, 0, 16, 16)
+             p.end()
+             self.tray_icon.setIcon(QIcon(pix))
+
+        tray_menu = QMenu()
+        tray_menu.addAction(self.loc.get("show"), self.showNormal)
+        
+        # О программе в трее
+        about_action = QAction(self.loc.get("about"), self)
+        about_action.triggered.connect(self.show_about_dialog)
+        tray_menu.addAction(about_action)
+
+        tray_menu.addSeparator()
+        tray_menu.addAction(self.loc.get("quit"), QApplication.quit)
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.show()
+        self.tray_icon.activated.connect(lambda reason: self.showNormal() if reason == QSystemTrayIcon.Trigger else None)
+
+    def show_about_dialog(self):
+        if not self.large_form:
+             self.large_form = LargeForm(self)
+        self.large_form.show_about()
+
 
 class LargeForm(QMainWindow):
     def __init__(self, small_form):
         super().__init__()
         self.small_form = small_form
         self.loc = self.small_form.loc
-        self.theme = self.small_form.theme
-        self.notes = self.small_form.notes
+        self.theme_name = self.small_form.theme_name
         self.initUI()
 
     def initUI(self):
         self.setWindowTitle(self.loc.get("title"))
-        self.setMinimumSize(600, 400)
-        self.setWindowIcon(QIcon("icon.png"))
+        self.setWindowIcon(QIcon(resource_path("icon.png")))
+        self.resize(600, 500)
+        
+        qr = self.frameGeometry()
+        cp = QDesktopWidget().availableGeometry().center()
+        qr.moveCenter(cp)
+        self.move(qr.topLeft())
 
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(15, 15, 15, 15)
-        main_layout.setSpacing(10)
+        central = QWidget()
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.create_menu()
 
-        # Создаем меню
-        self.create_menu_bar()
+        self.text_edit = QTextEdit()
+        self.text_edit.setReadOnly(True)
+        self.text_edit.setFont(QFont("Consolas", 10))
+        self.text_edit.setFrameShape(QFrame.NoFrame)
+        layout.addWidget(self.text_edit)
 
-        # Панель поиска и сортировки
-        top_panel = QWidget()
-        top_layout = QHBoxLayout(top_panel)
-        top_layout.setSpacing(8)
-
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText(self.loc.get("search"))
-        self.search_input.setFixedHeight(32)
-        self.search_input.setStyleSheet("""
-            QLineEdit {
-                border: 1px solid #cccccc;
-                border-radius: 8px;
-                padding: 6px;
-                background-color: #ffffff;
-            }
-            QLineEdit:focus {
-                border: 1px solid #2196F3;
-                background-color: #f0f8ff;
-            }
-        """)
-        self.search_input.textChanged.connect(self.filter_notes)  # Добавляем обработчик
-        top_layout.addWidget(self.search_input)
-
-        self.sort_combo = QComboBox()
-        self.sort_combo.addItems([
-            self.loc.get("sort_date_desc"),
-            self.loc.get("sort_date_asc"),
-            self.loc.get("sort_alpha")
-        ])
-        self.sort_combo.setFixedHeight(32)
-        self.sort_combo.setStyleSheet("""
-            QComboBox {
-                border: 1px solid #cccccc;
-                border-radius: 8px;
-                padding: 6px;
-                background-color: #ffffff;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 20px;
-            }
-        """)
-        self.sort_combo.currentIndexChanged.connect(self.sort_notes)  # Добавляем обработчик сортировки
-        top_layout.addWidget(self.sort_combo)
-
-        main_layout.addWidget(top_panel)
-
-        # Область заметок
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.notes_container = QWidget()
-        self.notes_layout = QVBoxLayout(self.notes_container)
-        self.notes_layout.setAlignment(Qt.AlignTop)
-        self.notes_layout.setSpacing(8)
-        self.scroll_area.setWidget(self.notes_container)
-        main_layout.addWidget(self.scroll_area)
-
-        # Добавляем нижнюю панель с полем ввода и кнопкой
-        bottom_panel = QWidget()
-        bottom_layout = QHBoxLayout(bottom_panel)
-        bottom_layout.setContentsMargins(0, 10, 0, 0)
-        bottom_layout.setSpacing(8)
-
+        bottom_widget = QWidget()
+        bottom_layout = QHBoxLayout(bottom_widget)
+        bottom_layout.setContentsMargins(10, 10, 10, 10)
+        
         self.note_input = QLineEdit()
-        self.note_input.setFont(QFont("Segoe UI", 11))
         self.note_input.setPlaceholderText(self.loc.get("enter_note"))
-        self.note_input.setFixedHeight(40)
-        self.note_input.setStyleSheet("""
-            QLineEdit {
-                border: 1px solid #cccccc;
-                border-radius: 8px;
-                padding: 8px;
-                background-color: #ffffff;
-            }
-            QLineEdit:focus {
-                border: 1px solid #2196F3;
-                background-color: #f0f8ff;
-            }
-        """)
-        bottom_layout.addWidget(self.note_input, stretch=1)
+        bottom_layout.addWidget(self.note_input)
 
-        self.add_button = QPushButton(self.loc.get("add"))
-        self.add_button.setFixedSize(32, 32)
-        self.add_button.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                border-radius: 16px;
-                font-size: 18px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #1976D2;
-            }
-            QPushButton:pressed {
-                background-color: #1565C0;
-            }
-        """)
-        self.add_button.clicked.connect(self.save_note)
-        self.add_button.setToolTip(self.loc.get("add_note"))
-        bottom_layout.addWidget(self.add_button)
+        self.add_btn = QPushButton(self.loc.get("add"))
+        self.add_btn.setFixedSize(28, 28)
+        self.add_btn.setCursor(Qt.PointingHandCursor)
+        self.add_btn.clicked.connect(self.add_note)
+        bottom_layout.addWidget(self.add_btn)
 
-        main_layout.addWidget(bottom_panel)
+        self.edit_mode_chk = QCheckBox(self.loc.get("edit_mode"))
+        self.edit_mode_chk.stateChanged.connect(self.toggle_edit)
+        bottom_layout.addWidget(self.edit_mode_chk)
 
-        self.apply_theme()
-        self.load_notes()
-        self.center_on_screen()
+        layout.addWidget(bottom_widget)
 
-    def create_menu_bar(self):
-        menu_bar = self.menuBar()
+        self.apply_styles()
+        self.load_file()
+
+    def create_menu(self):
+        mb = self.menuBar()
+        mb.clear()
         
-        file_menu = menu_bar.addMenu(self.loc.get("settings"))
-        theme_menu = QMenu(self.loc.get("themes"), self)
+        settings = mb.addMenu(self.loc.get("settings"))
         
-        light_theme = QAction(self.loc.get("theme_light"), self)
-        dark_theme = QAction(self.loc.get("theme_dark"), self)
-        theme_menu.addAction(light_theme)
-        theme_menu.addAction(dark_theme)
-        file_menu.addMenu(theme_menu)
-
-        export_action = QAction(self.loc.get("export"), self)
-        import_action = QAction(self.loc.get("import"), self)
-        file_menu.addAction(export_action)
-        file_menu.addAction(import_action)
-
-        light_theme.triggered.connect(lambda: self.change_theme("light"))
-        dark_theme.triggered.connect(lambda: self.change_theme("dark"))
-        export_action.triggered.connect(self.export_notes)
-        import_action.triggered.connect(self.import_notes)
-
-    
-    def apply_theme(self):
-        if self.theme == "dark":
-            self.setStyleSheet("""
-                background-color: #2D2D2D;
-                color: #FFFFFF;
-            """)
-            self.scroll_area.setStyleSheet("""
-                QScrollArea {
-                    background-color: #2D2D2D;
-                    border: none;
-                }
-            """)
-            self.search_input.setStyleSheet("""
-                QLineEdit {
-                    border: 1px solid #555555;
-                    border-radius: 8px;
-                    padding: 6px;
-                    background-color: #3C3C3C;
-                    color: #FFFFFF;
-                }
-                QLineEdit:focus {
-                    border: 1px solid #2196F3;
-                    background-color: #454545;
-                }
-            """)
-            self.note_input.setStyleSheet("""
-                QLineEdit {
-                    border: 1px solid #555555;
-                    border-radius: 8px;
-                    padding: 8px;
-                    background-color: #3C3C3C;
-                    color: #FFFFFF;
-                }
-                QLineEdit:focus {
-                    border: 1px solid #2196F3;
-                    background-color: #454545;
-                }
-            """)
-            self.sort_combo.setStyleSheet("""
-                QComboBox {
-                    border: 1px solid #555555;
-                    border-radius: 8px;
-                    padding: 6px;
-                    background-color: #3C3C3C;
-                    color: #FFFFFF;
-                }
-                QComboBox::drop-down {
-                    border: none;
-                    width: 20px;
-                }
-            """)
-        else:
-            self.setStyleSheet("""
-                background-color: #F5F5F5;
-                color: #333333;
-            """)
-            self.scroll_area.setStyleSheet("""
-                QScrollArea {
-                    background-color: #F5F5F5;
-                    border: none;
-                }
-            """)
-            self.search_input.setStyleSheet("""
-                QLineEdit {
-                    border: 1px solid #cccccc;
-                    border-radius: 8px;
-                    padding: 6px;
-                    background-color: #ffffff;
-                    color: #333333;
-                }
-                QLineEdit:focus {
-                    border: 1px solid #2196F3;
-                    background-color: #f0f8ff;
-                }
-            """)
-            self.note_input.setStyleSheet("""
-                QLineEdit {
-                    border: 1px solid #cccccc;
-                    border-radius: 8px;
-                    padding: 8px;
-                    background-color: #ffffff;
-                    color: #333333;
-                }
-                QLineEdit:focus {
-                    border: 1px solid #2196F3;
-                    background-color: #f0f8ff;
-                }
-            """)
-            self.sort_combo.setStyleSheet("""
-                QComboBox {
-                    border: 1px solid #cccccc;
-                    border-radius: 8px;
-                    padding: 6px;
-                    background-color: #ffffff;
-                    color: #333333;
-                }
-                QComboBox::drop-down {
-                    border: none;
-                    width: 20px;
-                }
-            """)
-    def sort_notes(self):
-        sort_type = self.sort_combo.currentIndex()
-        search_text = self.search_input.text().lower()
+        theme_menu = QMenu(self.loc.get("theme_light") if self.theme_name == 'dark' else self.loc.get("theme_dark"), self)
+        act_light = QAction(self.loc.get("theme_light"), self)
+        act_light.triggered.connect(lambda: self.change_theme("light"))
+        act_dark = QAction(self.loc.get("theme_dark"), self)
+        act_dark.triggered.connect(lambda: self.change_theme("dark"))
+        settings.addAction(act_light)
+        settings.addAction(act_dark)
         
-        # Фильтруем заметки перед сортировкой
-        filtered_notes = [
-            note for note in self.notes 
-            if search_text.lower() in note['text'].lower() or 
-            search_text.lower() in note['time'].lower()
-        ]
+        settings.addSeparator()
+        
+        lang_menu = QMenu(self.loc.get("language"), self)
+        act_ru = QAction("Русский", self)
+        act_ru.triggered.connect(lambda: self.change_lang("ru"))
+        act_en = QAction("English", self)
+        act_en.triggered.connect(lambda: self.change_lang("en"))
+        settings.addMenu(lang_menu)
+        lang_menu.addAction(act_ru)
+        lang_menu.addAction(act_en)
 
-        # Сортировка
-        if sort_type == 0:  # По дате (убывание)
-            filtered_notes.sort(key=lambda x: x['time'], reverse=True)
-        elif sort_type == 1:  # По дате (возрастание)
-            filtered_notes.sort(key=lambda x: x['time'])
-        elif sort_type == 2:  # По алфавиту
-            filtered_notes.sort(key=lambda x: x['text'].lower())
+        settings.addSeparator()
+        act_clear = QAction(self.loc.get("clear_file"), self)
+        act_clear.triggered.connect(self.clear_file)
+        settings.addAction(act_clear)
+        act_export = QAction(self.loc.get("export"), self)
+        act_export.triggered.connect(self.export_file)
+        settings.addAction(act_export)
 
-        # Обновляем отображение
-        self.notes = [note for note in self.notes if note not in filtered_notes] + filtered_notes
-        self.load_notes(search_text)
+        # Меню Справка
+        help_menu = mb.addMenu("?")
+        act_about = QAction(self.loc.get("about"), self)
+        act_about.triggered.connect(self.show_about)
+        help_menu.addAction(act_about)
 
-    def center_on_screen(self):
-        screen = QDesktopWidget().screenGeometry()
-        size = self.geometry()
-        self.move((screen.width() - size.width()) // 2,
-                 (screen.height() - size.height()) // 2)
+    def show_about(self):
+        msg = QMessageBox(self)
+        msg.setWindowTitle(self.loc.get("about"))
+        msg.setTextFormat(Qt.RichText)
+        # Разрешаем кликать по ссылкам
+        msg.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        
+        # HTML контент
+        text = f"""
+        <center>
+            <h3 style='margin-bottom:0px;'>{self.loc.get("title")}</h3>
+        </center>
+        <p><b>Идея и улучшения:</b> <a href='https://github.com/rintaru123'>Rintaru123</a></p>
+        <p><b>Разработка:</b> Gemini-3-pro</p>
+        <hr>
+        <p style='font-size:10px; color: #777;'>
+            Icons by Bootstrap Authors, licensed under MIT License.<br>
+            Source: <a href='https://icon-icons.com/pack/bootstrap/2645'>icon-icons.com</a>
+        </p>
+        """
+        msg.setText(text)
+        msg.exec_()
 
-    
+    def apply_styles(self):
+        s = STYLES[self.theme_name]
+        self.setStyleSheet(f"background-color: {s['bg']}; color: {s['text']};")
+        self.text_edit.setStyleSheet(f"QTextEdit {{ background-color: {s['bg']}; color: {s['text']}; border: none; padding: 10px; }}")
+        self.note_input.setStyleSheet(f"QLineEdit {{ border: 1px solid {s['input_border']}; border-radius: 5px; padding: 8px; background-color: {s['input_bg']}; color: {s['text']}; }}")
+        self.add_btn.setStyleSheet(f"QPushButton {{ background-color: {s['btn_bg']}; color: {s['btn_text']}; border-radius: 14px; font-size: 16px; font-weight: bold; border: none; }} QPushButton:hover {{ background-color: {s['btn_hover']}; }}")
 
-    def load_notes(self, search_text=""):
-        while self.notes_layout.count():
-            item = self.notes_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+    def load_file(self):
+        if os.path.exists(TEXT_FILE):
+            with open(TEXT_FILE, "r", encoding="utf-8") as f:
+                self.text_edit.setPlainText(f.read())
+            self.text_edit.moveCursor(QTextCursor.End)
 
-        if self.notes:
-            #print(self.notes)
-            filtered_notes = [ note for note in self.notes if search_text.lower() in note['text'].lower() or search_text.lower() in note['time'].lower()]
-        else:
-            filtered_notes=[]
-
-        if not filtered_notes:
-            no_notes_label = QLabel(self.loc.get("no_notes"))
-            no_notes_label.setAlignment(Qt.AlignCenter)
-            no_notes_label.setStyleSheet("""
-                QLabel {
-                    color: #888888;
-                    font-size: 14px;
-                    padding: 20px;
-                }
-            """)
-            self.notes_layout.addWidget(no_notes_label)
-            return
-
-        for note in filtered_notes:
-            note_widget = QWidget()
-            note_layout = QHBoxLayout(note_widget)
-            note_layout.setContentsMargins(10, 10, 10, 10)
-
-            # Создаем контейнер для текста заметки
-            text_container = QWidget()
-            text_layout = QVBoxLayout(text_container)
-            text_layout.setContentsMargins(0, 0, 0, 0)
-            text_layout.setSpacing(2)
-
-            # QLabel для даты и времени (полужирный)
-            date_label = QLabel(note['time'])
-            date_label.setStyleSheet("""
-                QLabel {
-                    color: #333333;
-                    font-size: 12px;
-                    font-weight: bold;
-                }
-            """ if self.theme == "light" else """
-                QLabel {
-                    color: #FFFFFF;
-                    font-size: 12px;
-                    font-weight: bold;
-                }
-            """)
-            text_layout.addWidget(date_label)
-
-            # QLabel для текста заметки (обычный)
-            text_label = QLabel(note['text'])
-            text_label.setWordWrap(True)
-            text_label.setStyleSheet("""
-                QLabel {
-                    color: #333333;
-                    font-size: 12px;
-                    text-align: justify;
-                }
-            """ if self.theme == "light" else """
-                QLabel {
-                    color: #FFFFFF;
-                    font-size: 12px;
-                    text-align: justify;
-                }
-            """)
-            text_layout.addWidget(text_label)
-
-            note_layout.addWidget(text_container)
-
-            edit_button = QPushButton(self.loc.get("edit"))
-            edit_button.setFixedSize(90, 24)
-            edit_button.setStyleSheet("""
-                QPushButton {
-                    background-color:rgb(55, 173, 0);
-                    color: white;
-                    border-radius: 6px;
-                    font-size: 10px;
-                }
-                QPushButton:hover {
-                    background-color:rgb(42, 107, 12);
-                }
-                QPushButton:pressed {
-                    background-color: rgb(15, 20, 12);
-                }
-            """)
-            edit_button.clicked.connect(lambda _, n=note: self.edit_note(n))
-            note_layout.addWidget(edit_button)
-
-            delete_button = QPushButton(self.loc.get("delete"))
-            delete_button.setFixedSize(60, 24)
-            delete_button.setStyleSheet("""
-                QPushButton {
-                    background-color: #F44336;
-                    color: white;
-                    border-radius: 6px;
-                    font-size: 10px;
-                }
-                QPushButton:hover {
-                    background-color: #D32F2F;
-                }
-                QPushButton:pressed {
-                    background-color: #C62828;
-                }
-            """)
-            delete_button.clicked.connect(lambda _, n=note: self.delete_note(n))
-            note_layout.addWidget(delete_button)
-
-            note_widget.setStyleSheet("""
-                QWidget {
-                    background-color: #FFFFFF;
-                    border-radius: 8px;
-                    padding: 5px;
-                }
-            """ if self.theme == "light" else """
-                QWidget {
-                    background-color: #3C3C3C;
-                    border-radius: 8px;
-                    padding: 5px;
-                }
-            """)
-            self.notes_layout.addWidget(note_widget)
+    def add_note(self):
+        text = self.note_input.text().strip()
+        if not text: return
+        
+        if self.edit_mode_chk.isChecked():
+            self.save_full_text() 
+        
+        current_time = datetime.now().strftime("%d.%m.%Y %H:%M")
+        new_entry = f"[{current_time}] {text}"
+        
+        with open(TEXT_FILE, "a", encoding="utf-8") as f:
+            f.write(new_entry + "\n")
             
-    def filter_notes(self):
-            search_text = self.search_input.text().lower()
-            self.load_notes(search_text)  # Передаем поисковый запрос в load_notes
-    def save_note(self):
-        note_text = self.note_input.text().strip()
-        if note_text:
-            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            note = {"time": current_time, "text": note_text}
-            self.notes.append(note)
-            self.save_notes()
-            self.note_input.clear()
-            self.small_form.show_notification(self.loc.get("saved"))
-            self.load_notes()
+        self.note_input.clear()
+        self.load_file()
+
+    def toggle_edit(self, state):
+        is_editing = (state == Qt.Checked)
+        self.text_edit.setReadOnly(not is_editing)
+        self.text_edit.setStyleSheet(f"border: {('1px solid #4CAF50' if is_editing else 'none')};")
+        if not is_editing:
+            self.save_full_text()
+
+    def save_full_text(self):
+        content = self.text_edit.toPlainText()
+        with open(TEXT_FILE, "w", encoding="utf-8") as f:
+            f.write(content)
+
+    def clear_file(self):
+        reply = QMessageBox.question(self, "Confirm", self.loc.get("confirm_clear"), QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            open(TEXT_FILE, "w").close()
+            self.text_edit.clear()
+
+    def export_file(self):
+        fn, _ = QFileDialog.getSaveFileName(self, self.loc.get("export"), "notes_export.txt", "Text Files (*.txt)")
+        if fn:
+            try:
+                with open(fn, 'w', encoding='utf-8') as f:
+                    f.write(self.text_edit.toPlainText())
+            except Exception as e:
+                QMessageBox.critical(self, self.loc.get("error"), str(e))
+
+    def change_theme(self, theme):
+        self.theme_name = theme
+        self.small_form.theme_name = theme
+        self.apply_styles()
+        self.small_form.apply_styles()
+        self.create_menu()
+
+    def change_lang(self, lang):
+        self.small_form.loc.set_language(lang)
+        self.small_form.lang = lang
+        self.update_texts()
+        self.small_form.update_ui_text()
+        self.create_menu()
+
+    def update_texts(self):
+        self.setWindowTitle(self.loc.get("title"))
+        self.note_input.setPlaceholderText(self.loc.get("enter_note"))
+        self.edit_mode_chk.setText(self.loc.get("edit_mode"))
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Return and event.modifiers() & Qt.ShiftModifier:
-            self.save_note()
+        if (event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter):
+            self.add_note()
             event.accept()
         else:
             super().keyPressEvent(event)
 
-    def edit_note(self, note):
-        text, ok = QInputDialog.getText(self, 
-                                      self.loc.get("edit_note"),
-                                      self.loc.get("enter_note"),
-                                      QLineEdit.Normal,
-                                      note['text'])
-        if ok and text:
-            note['text'] = text
-            note['time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            self.save_notes()
-            self.load_notes()
-
-    def delete_note(self, note):
-        reply = QMessageBox.question(self,
-                                   self.loc.get("delete"),
-                                   f"{self.loc.get('delete')} {note['text']}?",
-                                   QMessageBox.Yes | QMessageBox.No,
-                                   QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            self.notes.remove(note)
-            self.save_notes()
-            self.load_notes()
-
-    def save_notes(self):
-        try:
-            with open(JSON_FILE, "w", encoding="utf-8") as f:
-                json.dump(self.notes, f, ensure_ascii=False, indent=2)
-            self.small_form.backup_notes()
-        except Exception as e:
-            logging.error(f"Error saving notes: {e}")
-            QMessageBox.critical(self, self.loc.get("error"),
-                               self.loc.get("error_saving") + f"\n{e}",
-                               QMessageBox.Ok)
-
-    def change_theme(self, theme):
-        self.theme = theme
-        self.small_form.theme = theme
-        self.apply_theme()
-        self.load_notes()
-        self.small_form.apply_theme()
-
-    def export_notes(self):
-        file_name, _ = QFileDialog.getSaveFileName(self,
-                                                 self.loc.get("export"),
-                                                 "",
-                                                 "JSON Files (*.json)")
-        if file_name:
-            try:
-                with open(file_name, "w", encoding="utf-8") as f:
-                    json.dump(self.notes, f, ensure_ascii=False, indent=2)
-            except Exception as e:
-                QMessageBox.critical(self, self.loc.get("error"),
-                                   self.loc.get("error_saving") + f"\n{e}",
-                                   QMessageBox.Ok)
-
-    def import_notes(self):
-        file_name, _ = QFileDialog.getOpenFileName(self,
-                                                 self.loc.get("import"),
-                                                 "",
-                                                 "JSON Files (*.json)")
-        if file_name:
-            try:
-                with open(file_name, "r", encoding="utf-8") as f:
-                    imported_notes = json.load(f)
-                self.notes.extend(imported_notes)
-                self.save_notes()
-                self.load_notes()
-            except Exception as e:
-                QMessageBox.critical(self, self.loc.get("error"),
-                                   self.loc.get("error_loading") + f"\n{e}",
-                                   QMessageBox.Ok)
-
     def closeEvent(self, event):
+        if self.edit_mode_chk.isChecked():
+            self.save_full_text()
         self.small_form.show()
+        self.small_form.note_input.setFocus()
+        self.small_form.activateWindow()
         event.accept()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    
-    # Установка глобального стиля приложения
     app.setStyle("Fusion")
-    
-    # Создание палитры для темной темы
-    dark_palette = QPalette()
-    dark_palette.setColor(QPalette.Window, QColor(53, 53, 53))
-    dark_palette.setColor(QPalette.WindowText, Qt.white)
-    dark_palette.setColor(QPalette.Base, QColor(35, 35, 35))
-    dark_palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
-    dark_palette.setColor(QPalette.ToolTipBase, Qt.white)
-    dark_palette.setColor(QPalette.ToolTipText, Qt.white)
-    dark_palette.setColor(QPalette.Text, Qt.white)
-    dark_palette.setColor(QPalette.Button, QColor(53, 53, 53))
-    dark_palette.setColor(QPalette.ButtonText, Qt.white)
-    dark_palette.setColor(QPalette.BrightText, Qt.red)
-    dark_palette.setColor(QPalette.Link, QColor(42, 130, 218))
-    dark_palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
-    dark_palette.setColor(QPalette.HighlightedText, Qt.black)
+    app.setQuitOnLastWindowClosed(False)
 
-    # Создание и запуск главного окна
-    small_form = SmallForm()
-    small_form.show()
+    font = QFont("Segoe UI", 10)
+    app.setFont(font)
 
+    form = SmallForm()
+    form.show()
     sys.exit(app.exec_())
